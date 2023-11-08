@@ -57,7 +57,7 @@ existLonger trees current = Prelude.any ((flip segmentContains) current) trees
 main :: IO ()
 main = do
     -- 从文件中读取 JSON 数据
-    jsonBytes <- B.readFile "my_report.json"
+    jsonBytes <- B.readFile "/home/data/Downloads/my_report.json"
     let jsons = Prelude.map decode (Char8.lines jsonBytes)
     let just_json = catMaybes jsons
     let objects = Prelude.filter isNvtxEvent just_json
@@ -71,7 +71,9 @@ main = do
     {-putStrLn (getChildNames $ Prelude.head trees) -} -- the order is the same with nsight.
     analysis_evalframe trees
     analysis_fallback_wrapper trees
-    analysis_interpreter_core trees
+    {-analysis_interpreter_core trees-}
+    analysis_dy2static_cast trees
+    analysis_mulguard trees
 
 -- filter helper function
 filterNameIn :: Text -> [Tree] -> [Tree]
@@ -102,7 +104,7 @@ getChildNames trees = string
     where texts = Prelude.map (\x->Data.Text.unpack (text_ x) ++ Data.Text.unpack "\n") $ children_ trees
           string = Prelude.foldr (++) "" texts
 
-batch_string = "26"
+batch_string = "41"
 
 analysis_evalframe :: [Tree] -> IO ()
 analysis_evalframe trees = do 
@@ -143,3 +145,28 @@ analysis_interpreter_core trees = do
     let min_cost = 1.0 --  0.2 ms is the min cost of run program op.
     let valid_interpreter = Prelude.filter (\x -> getTime x > min_cost) interpreter
     print ("Valid vs NoValid: " ++ show (Prelude.length valid_interpreter) ++ " / " ++ show (Prelude.length interpreter))
+
+analysis_dy2static_cast :: [Tree] -> IO ()
+analysis_dy2static_cast nodes = do 
+    print "Start analysis dy2static_cast info..."
+    let root = filterNameExactly batch_string nodes
+    let children = flattenChildren (Prelude.head root)
+    let fallback_wrappers = filterNameIn "FallbackWrapper: SIR" children
+    let start_to_get_interpreter_cache_time x = (fromInteger time_stamp :: Double) / 1000000.0
+            where get_interpreter_cache_node = Prelude.head $ filterNameExactly "get_interpretercore_cahce" (flattenChildren x)
+                  time_stamp = start_time_ get_interpreter_cache_node - start_time_ x
+    let totals = Prelude.foldr (\x r -> start_to_get_interpreter_cache_time x + r) 0.0 fallback_wrappers
+    print ("Dy2static prepare cost is " ++ show totals ++ " ms")
+
+-- guard 分桶机制的优化时间
+analysis_mulguard :: [Tree] -> IO ()
+analysis_mulguard nodes = do 
+    print "Start analysis multi-guard problem info..."
+    let root = filterNameExactly batch_string nodes
+    let children = flattenChildren (Prelude.head root)
+    let lookups = filterNameExactly "lookup" children
+    let single_improve x = all_guard_time - first_guard_time
+            where all_guard_time = summaryTime $ children_ x
+                  first_guard_time = getTime $ (Prelude.head . children_) x 
+    let totals = Prelude.foldr (\x r -> single_improve x + r) 0.0 lookups
+    print ("Guard hit improvement: " ++ show totals ++ " ms")
